@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -11,6 +12,16 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+type ObsidianVault struct {
+	Path string `json:"path"`
+	Ts   int    `json:"ts"`
+	Open bool   `json:"open"`
+}
+
+type ObsidianConfig struct {
+	Vaults map[string]ObsidianVault `json:"vaults"`
+}
 
 type AlfredResults struct {
 	Items []AlfredResult `json:"items"`
@@ -52,7 +63,7 @@ func findMatchingFiles(searchTerm string, directory string, vault string) Alfred
 
 	// TODO: don't hardcode the path to fd
 	// TODO: sort the results in reverse chronological order
-	out, err := exec.Command("/usr/local/bin/fd", "-0", "--type=f", "--glob", searchTerm).Output()
+	out, err := exec.Command("/usr/local/bin/fd", "-0", "--type=f", searchTerm).Output()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -105,6 +116,26 @@ func fruncate(s string, p string, n int, m int) string {
 	return s
 }
 
+func getDefaults(obsidianConfig string) (string, string) {
+	content, err := ioutil.ReadFile(obsidianConfig)
+	if err != nil {
+		log.Fatalf("could not open %s", obsidianConfig)
+	}
+	var result ObsidianConfig
+	err = json.Unmarshal(content, &result)
+	if err != nil {
+		log.Fatalf("Could not parse %s", content)
+	}
+
+	for vaultId, vault := range result.Vaults {
+		if vault.Open {
+			return vaultId, vault.Path
+		}
+	}
+
+	return "", ""
+}
+
 func grepMatchingFiles(searchTerm string, directory string, vault string) AlfredResults {
 	err := os.Chdir(directory)
 	if err != nil {
@@ -113,7 +144,7 @@ func grepMatchingFiles(searchTerm string, directory string, vault string) Alfred
 
 	// TODO: don't hardcode the path to rg
 	// TODO: sort in reverse chronological order
-	out, err := exec.Command("/usr/local/bin/rg", "--json", "--sortr", "modified", searchTerm).Output()
+	out, err := exec.Command("/usr/local/bin/rg", "--json", "--ignore-case", "--sortr", "modified", searchTerm).Output()
 	lines := strings.Split(string(out), "\n")
 
 	var results []AlfredResult
@@ -161,14 +192,15 @@ func main() {
 	flag.StringVar(&vaultPath, "path", "", "path to vault directory")
 	flag.Parse()
 
-	// TODO: Figure out if there is a way to find the current vault name and use that as default
+	const ObsidianConfigFile = "~/Library/Application Support/obsidian/obsidian.json"
+	defaultVault, defaultPath := getDefaults(expandHome(ObsidianConfigFile))
+
 	if len(vaultName) == 0 {
-		log.Fatal("vault name must be specified with --vault")
+		vaultName = defaultVault
 	}
 
-	// TODO: Figure out if there is a way to get the path from the vault name
 	if len(vaultPath) == 0 {
-		log.Fatal("vault path must be specified with --path")
+		vaultPath = defaultPath
 	}
 
 	var searchTerm string
